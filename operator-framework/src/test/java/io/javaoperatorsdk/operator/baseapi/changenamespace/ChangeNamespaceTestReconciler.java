@@ -53,7 +53,9 @@ public class ChangeNamespaceTestReconciler
       ChangeNamespaceTestCustomResource primary,
       Context<ChangeNamespaceTestCustomResource> context) {
 
-    context.resourceOperations().serverSideApply(configMap(primary));
+    context
+        .resourceOperations()
+        .serverSideApply(configMap(primary), ResourceOperations.Options.forceFilterEvents());
 
     if (primary.getStatus() == null) {
       primary.setStatus(new ChangeNamespaceTestCustomResourceStatus());

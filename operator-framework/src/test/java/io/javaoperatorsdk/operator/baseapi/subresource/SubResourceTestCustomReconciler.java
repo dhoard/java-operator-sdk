@@ -43,10 +43,17 @@ public class SubResourceTestCustomReconciler
     numberOfExecutions.addAndGet(1);
     log.info("Value: " + resource.getSpec().getValue());
 
-    ensureStatusExists(resource);
-    resource.getStatus().setState(SubResourceTestCustomResourceStatus.State.SUCCESS);
     waitXms(RECONCILER_MIN_EXEC_TIME);
-    return UpdateControl.patchStatus(resource);
+    context
+        .resourceOperations()
+        .jsonPatchPrimaryStatus(
+            resource,
+            r -> {
+              ensureStatusExists(r);
+              r.getStatus().setState(SubResourceTestCustomResourceStatus.State.SUCCESS);
+              return r;
+            });
+    return UpdateControl.noUpdate();
   }
 
   private void ensureStatusExists(SubResourceTestCustomResource resource) {

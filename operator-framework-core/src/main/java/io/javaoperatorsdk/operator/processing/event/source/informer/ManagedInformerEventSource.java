@@ -39,6 +39,7 @@ import io.javaoperatorsdk.operator.ReconcilerUtilsInternal;
 import io.javaoperatorsdk.operator.api.config.ControllerConfiguration;
 import io.javaoperatorsdk.operator.api.config.Informable;
 import io.javaoperatorsdk.operator.api.config.NamespaceChangeable;
+import io.javaoperatorsdk.operator.api.reconciler.Experimental;
 import io.javaoperatorsdk.operator.api.reconciler.dependent.RecentOperationCacheFiller;
 import io.javaoperatorsdk.operator.health.InformerHealthIndicator;
 import io.javaoperatorsdk.operator.health.InformerWrappingEventSourceHealthIndicator;
@@ -47,6 +48,8 @@ import io.javaoperatorsdk.operator.processing.MDCUtils;
 import io.javaoperatorsdk.operator.processing.event.ResourceID;
 import io.javaoperatorsdk.operator.processing.event.source.*;
 import io.javaoperatorsdk.operator.processing.event.source.ResourceAction;
+
+import static io.javaoperatorsdk.operator.api.reconciler.Experimental.API_MIGHT_CHANGE;
 
 @SuppressWarnings("rawtypes")
 public abstract class ManagedInformerEventSource<
@@ -93,11 +96,13 @@ public abstract class ManagedInformerEventSource<
    * Also makes sure that the even produced by this update is filtered, thus does not trigger the
    * reconciliation.
    */
+  @Experimental(API_MIGHT_CHANGE)
   @SuppressWarnings("unchecked")
   public R eventFilteringUpdateAndCacheResource(R resourceToUpdate, UnaryOperator<R> updateMethod) {
+
     ResourceID id = ResourceID.fromResource(resourceToUpdate);
-    log.debug("Starting event filtering and caching update for id={}", id);
-    R updatedResource = null;
+    log.debug("Starting event filtering and caching update for id: {}", id);
+    R updatedResource;
     Set<ResourceID> relatedPrimaryIds = null;
     try {
       temporaryResourceCache.startEventFilteringModify(id);
@@ -132,6 +137,19 @@ public abstract class ManagedInformerEventSource<
         log.debug("No new event present after the filtering update. id={}", id);
       }
     }
+  }
+
+  @Experimental(API_MIGHT_CHANGE)
+  public R updateAndCacheResource(R resourceToUpdate, UnaryOperator<R> updateOperation) {
+    if (log.isDebugEnabled()) {
+      log.debug(
+          "Updating and caching resource without filtering. id: {} type: {}",
+          ResourceID.fromResource(resourceToUpdate),
+          resourceType());
+    }
+    var result = updateOperation.apply(resourceToUpdate);
+    handleRecentResourceUpdate(ResourceID.fromResource(resourceToUpdate), result, resourceToUpdate);
+    return result;
   }
 
   protected abstract void handleEvent(

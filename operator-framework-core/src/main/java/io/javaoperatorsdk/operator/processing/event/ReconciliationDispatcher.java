@@ -31,6 +31,7 @@ import io.javaoperatorsdk.operator.api.reconciler.BaseControl;
 import io.javaoperatorsdk.operator.api.reconciler.Context;
 import io.javaoperatorsdk.operator.api.reconciler.DefaultContext;
 import io.javaoperatorsdk.operator.api.reconciler.DeleteControl;
+import io.javaoperatorsdk.operator.api.reconciler.ResourceOperations;
 import io.javaoperatorsdk.operator.api.reconciler.RetryInfo;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 import io.javaoperatorsdk.operator.processing.Controller;
@@ -136,10 +137,9 @@ class ReconciliationDispatcher<P extends HasMetadata> {
       if (useSSA) {
         updatedResource = context.resourceOperations().addFinalizerWithSSA();
       } else {
-        updatedResource = context.resourceOperations().addFinalizer();
+        updatedResource = context.resourceOperations().addFinalizer(true);
       }
-      return PostExecutionControl.onlyFinalizerAdded(updatedResource)
-          .withReSchedule(BaseControl.INSTANT_RESCHEDULE);
+      return PostExecutionControl.onlyFinalizerAdded(updatedResource);
     } else {
       try {
         return reconcileExecution(executionScope, resourceForExecution, originalResource, context);
@@ -366,9 +366,14 @@ class ReconciliationDispatcher<P extends HasMetadata> {
         log.debug("Trying to replace resource");
       }
       if (useSSA) {
-        return context.resourceOperations().serverSideApplyPrimary(resource);
+        return context
+            .resourceOperations()
+            .serverSideApplyPrimary(resource, ResourceOperations.Options.cacheOnly());
       } else {
-        return context.resourceOperations().jsonPatchPrimary(originalResource, r -> resource);
+        return context
+            .resourceOperations()
+            .jsonPatchPrimary(
+                originalResource, r -> resource, ResourceOperations.Options.cacheOnly());
       }
     }
 
@@ -378,7 +383,9 @@ class ReconciliationDispatcher<P extends HasMetadata> {
         var managedFields = resource.getMetadata().getManagedFields();
         try {
           resource.getMetadata().setManagedFields(null);
-          return context.resourceOperations().serverSideApplyPrimaryStatus(resource);
+          return context
+              .resourceOperations()
+              .serverSideApplyPrimaryStatus(resource, ResourceOperations.Options.cacheOnly());
         } finally {
           resource.getMetadata().setManagedFields(managedFields);
         }
@@ -402,7 +409,8 @@ class ReconciliationDispatcher<P extends HasMetadata> {
                 r -> {
                   ReconcilerUtilsInternal.setStatus(r, ReconcilerUtilsInternal.getStatus(resource));
                   return r;
-                });
+                },
+                ResourceOperations.Options.cacheOnly());
       } finally {
         // restore initial resource version
         clonedOriginal.getMetadata().setResourceVersion(resourceVersion);
