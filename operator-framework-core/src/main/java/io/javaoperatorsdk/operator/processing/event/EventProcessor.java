@@ -297,7 +297,9 @@ public class EventProcessor<P extends HasMetadata> implements EventHandler, Life
         && postExecutionControl.exceptionDuringExecution()
         && (!state.deleteEventPresent() || triggerOnAllEvents())) {
       handleRetryOnException(
-          executionScope, postExecutionControl.getRuntimeException().orElseThrow());
+          executionScope,
+          postExecutionControl.getRuntimeException().orElseThrow(),
+          postExecutionControl.isErrorHandledByReconciler());
       return;
     }
     cleanupOnSuccessfulExecution(executionScope);
@@ -327,6 +329,9 @@ public class EventProcessor<P extends HasMetadata> implements EventHandler, Life
   private void logErrorIfNoRetryConfigured(
       ExecutionScope<P> executionScope, PostExecutionControl<P> postExecutionControl) {
     if (!isRetryConfigured() && postExecutionControl.exceptionDuringExecution()) {
+      // No retry is configured, so this failure is final. Even if the reconciler handled the error
+      // in updateErrorStatus, we keep the higher-severity log so a non-recoverable failure is not
+      // hidden from operators.
       log.error(
           "Error during event processing {}",
           executionScope,
@@ -369,14 +374,16 @@ public class EventProcessor<P extends HasMetadata> implements EventHandler, Life
    * events (received meanwhile retry is in place or already in buffer) instantly or always wait
    * according to the retry timing if there was an exception.
    */
-  private void handleRetryOnException(ExecutionScope<P> executionScope, Exception exception) {
+  private void handleRetryOnException(
+      ExecutionScope<P> executionScope, Exception exception, boolean errorHandledByReconciler) {
     final var state = getOrInitRetryExecution(executionScope);
     var resourceID = state.getId();
     boolean eventPresent =
         state.eventPresent()
             || (triggerOnAllEvents() && state.isAdditionalEventPresentAfterDeleteEvent());
     state.markEventReceived(triggerOnAllEvents());
-    retryAwareErrorLogging(state.getRetry(), eventPresent, exception, executionScope);
+    retryAwareErrorLogging(
+        state.getRetry(), eventPresent, errorHandledByReconciler, exception, executionScope);
     metrics.reconciliationFailed(
         executionScope.getResource(), state.getRetry(), exception, metricsMetadata);
     if (eventPresent) {
@@ -408,17 +415,29 @@ public class EventProcessor<P extends HasMetadata> implements EventHandler, Life
   private void retryAwareErrorLogging(
       RetryExecution retry,
       boolean eventPresent,
+      boolean errorHandledByReconciler,
       Exception exception,
       ExecutionScope<P> executionScope) {
     if (!retry.isLastAttempt()
         && exception instanceof KubernetesClientException ex
         && ex.getCode() == HttpURLConnection.HTTP_CONFLICT) {
+      // The conflict branch is already low-noise (DEBUG + INFO) and provides actionable info, so it
+      // keeps precedence over the handled-error downgrade below.
       log.debug("Full client conflict error during event processing {}", executionScope, exception);
       log.info(
           "Resource Kubernetes Resource Creator/Update Conflict during reconciliation. Message:"
               + " {} Resource name: {}",
           ex.getMessage(),
           ex.getFullResourceName());
+    } else if (errorHandledByReconciler && !retry.isLastAttempt()) {
+      // The reconciler already handled the error in updateErrorStatus (and had the chance to log it
+      // as needed), so while there are retries remaining the framework only logs it on debug level.
+      // On the last attempt we still fall through to the higher-severity logging below, so a final,
+      // non-recoverable failure is not hidden from operators.
+      log.debug(
+          "Error during event processing {}, but was handled by the reconciler",
+          executionScope,
+          exception);
     } else if (eventPresent || !retry.isLastAttempt()) {
       log.warn(
           "Uncaught error during event processing {} - but another reconciliation will be attempted"
